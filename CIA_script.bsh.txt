@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+#You need to be in the directory where the files are located!
+#The ocrmypdf command needs the syntax: ocrmypdf input.pdf output.pdf
+#the command for this script needs to sound if located one directory up: 
+##bash ../CIA_script.bsh.txt
+
+for pdf in *.pdf
+	do
+		echo "$pdf"
+		ocrmypdf "$pdf" ../CIA_sources_output_ocr/$pdf
+done

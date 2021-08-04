@@ -1,0 +1,298 @@
+---
+title: "textmining_CIA_rmarkdown"
+author: Markus Oliver Nielsen
+output: html_document
+---
+
+# Loading R-packages
+To make this project possible I need to load a couple of R-packages. These include:
+```{r message=FALSE}
+library(readtext)
+library(tidyverse)
+library(tidytext)
+library(textdata)
+library(lubridate)
+```
+With the packages loaded I can proceed with my work
+
+# Loading data
+I made a folder om my computer wherein I placed the data that I want to work with. I place these in a folder called data
+I want to load the data that I put in a directory called data.  
+I ask the readtext function to make a dataset called CIA with the data from the data directory.
+
+```{r}
+CIA <- as_tibble(readtext("./data/*.pdf", 
+                docvarsfrom = "filenames",
+                docvarnames = c("date", "from", "to","subject"),
+                dvsep = "_",
+                encoding = "UTF-8"))
+```
+
+I have put metadata about the documents in the filename. It's structured like this '"date"_"from"_"to"_"subject".pdf'. An example of this is "1957-12-12_cia_cia_pasternak.pdf". In the courpus I used 4 diffenrent values for the "from" section: cia, sr, sr2, na. I used 5 different different values for the "to" section: cia, sr, sr2, poor, nr. I used 5 different values for the "subject" section: sr, feltrinelli, mouton, pasternak, na. 
+
+Explanation of the values:  
+  from/to:  
+    cia = Central Intellegence Agency  
+    sr = Soviet Russia Division/AEDinasaure  
+    sr2 = Soviet Russia Division 2  
+    poor = Henry Poor, Counselor of law   
+    na = data no available  
+
+  Subject:  
+    sr = regarding AEDinasaure  
+    feltrinelli = regarding Feltrinelli and copyrights for "Doctor Zhivago", by Boris Pasternak  
+    mouton = Regarding the 1958 mouton edition of "Doctor Zhivago"  
+    pasternak = Regarding "Doctor Zhivago" or Boris Pasternak unspecified  
+    na = Data not available  
+    
+I tell the redatext function that I want det files sorted by the filename and that I separated the different data by a underscore "_" in the filenames, with the "dvsep =" function.  
+I use the UTF-8 encoding to make sure that the program will understand all the caracters. Without this encoding that program might not understand soecial caracters
+
+
+# Analysis 
+
+To begin my analysis I need to make sure that my data is in a tidydata-format. For this I use the unnest_tokens-function. This function makes my dataset into a tidydata-format which breakes the text into single words and removes capital letters, among other things.   
+I want to remove all numbers from my text since I don't need them for my analysis. I do this with the mutate-function, by using the stringr-package replace all function. This allows me to remove all numbers with a regex function.  
+I remove stopwords by using the stopwordlist from tidytext.
+
+```{r}
+CIA_clean <- CIA %>% 
+  mutate(text = 
+           str_replace_all(text, 
+                           pattern = 
+                            "\\d", "")) %>% 
+  unnest_tokens(word, text) %>%
+  anti_join(stop_words) %>%
+  count(doc_id, word, sort = TRUE)
+
+CIA_clean
+```
+
+
+
+## Term Frequency and Inverse Document Frequency
+
+Termfrequency tells you how many times a word occurs in a text, and is calculated by deviding how many times a word appears in the document with the total number of words.
+
+tf=n/total
+
+Inverse document frequency decreases the weight of words that occurs a lot in the text and increases the weight of words that doesn't occur that octen. This shows what words are used the least in the text. 
+
+You can combine these two to make the function tf-idf, which weights the words that makes a single text uniqe from the corpus the highest. 
+
+In order to calculate the total number of words I need to use a tibble on which there hasn't been used a stopwordlist. Therefore I use the CIA data and use the same functions as I did on the CIA_clean, but without that stopwordlist. I call this CIA_ftw (ftw = for total words).
+
+I calculate the total number of words and by assigning the sum of "n" categorized by "from" (sender) to "total".
+
+```{r}
+CIA_ftw <- CIA %>%
+  mutate(text = 
+           str_replace_all(text, 
+                           pattern = 
+                            "\\d", "")) %>% 
+  unnest_tokens(word, text) %>% 
+  count(from, word, sort=TRUE) %>% 
+  ungroup()
+  
+
+total_words <- CIA_ftw %>% 
+  group_by(from) %>% 
+  summarize(total=sum(n))
+
+```
+
+I then want to use the tf-idf function on the dataset. 
+
+First I need to combine my CIA_ftw with the total number of words that I calculated earlier. I do this by using the left_join function. I call this tibble CIA_tw (tw = total words)
+
+I can now use the function from the tidytext package called bind_tf_idf. This makes all the necessary calculations, and prints a tibble with tf, idf and tf_idf.
+```{r}
+CIA_tw <- left_join(CIA_ftw, total_words)
+
+CIA_tw %>%
+  bind_tf_idf(word, from, n) %>% 
+  arrange(desc(tf_idf))
+```
+
+With this function I can gather a number of informations. But in order to make the most use of it I need to filter the data to narrow my search.
+
+### Feltrinelli
+I can for example choose to filter by subject and look at what words are least common in the documents concerning Feltrinelli.
+
+First I filter all the documents that have the subject "feltrinelli"
+
+```{r}
+CIA %>% 
+  filter(subject == "feltrinelli") -> CIA_feltrinelli
+```
+
+Then I clean the data of numbers and filter to show only documents from 1958.
+```{r}
+CIA_feltrinelli %>% 
+   mutate(text = 
+           str_replace_all(text, 
+                           pattern = 
+                            "\\d", "")) %>% 
+  mutate(month = month(date)) %>% 
+  mutate(year = year(date)) %>% 
+  filter(year == "1958")-> CIA_feltrinelli
+```
+
+With the fitered data I can use the tf_idf function to show the least common words in the texts concerning "feltrinelli", sorted by month.
+
+```{r}
+total_words_feltrinelli <- CIA_feltrinelli %>%
+  unnest_tokens(word, text) %>% 
+  count(month, word) %>% 
+  group_by(month) %>% 
+  summarize(total=sum(n))
+
+
+CIA_feltrinelli_tw <- CIA_feltrinelli %>% 
+   unnest_tokens(word, text) %>% 
+  count(month, word) %>% 
+  left_join(total_words_feltrinelli, "month")
+
+CIA_feltrinelli_tw %>%
+  bind_tf_idf(word, month, n) %>% 
+  arrange(desc(tf_idf))
+```
+
+
+### Visualization
+
+I can visualize the data that I made with the feltrinelli subject from 1958 sorted by months.
+
+I filter out the month of january, since it's a very small datapoint and therefore scews my plot.
+```{r}
+CIA_feltrinelli_tw %>%
+  bind_tf_idf(word, month, n) %>% 
+  arrange(desc(tf_idf)) %>%
+  filter(month != 1) %>% 
+  mutate(word = factor(word, levels = rev(unique(word)))) %>% 
+  group_by(month) %>% 
+  top_n(10) %>% 
+  ungroup %>%
+  ggplot(aes(word, tf_idf)) +
+  geom_col(show.legend = FALSE, fill = "skyblue2") +
+  labs(x = NULL, y = "tf-idf") +
+  facet_wrap(~month, ncol = 3, scales = "free_y") +
+  scale_y_continuous(labels = scales::comma_format(accuracy = 0.0001)) +
+  coord_flip()
+```
+
+
+
+
+I can do this with any number of subjects, dates, etc.. 
+
+## Coloums
+I make a coloum plot for the text to visualize what's the most common words in the whole corpus
+
+In order to do this I have some words that I want to remove from the dataset.  
+Among these in "approved" and "release". They can be found on the header of every single document in the corpus in this manner "Approved for Release". These has got not meaning for me in my analysis.  
+
+The other words in my own stopwordlist is words I wanted to remove from my wordcloud.
+
+```{r}
+stopord <- c("approved", "release", "fy", "te", "or", "ar", "lo", "bov", "dr", "oy", "pp", "fi", "de", "ri", "cs", "mm", "ot", "st", "dir", "hr", "é", "el", "ax", "bs", "mar")
+
+stopord_CIA <- tibble(word=stopord)
+```
+
+I can now make a columnplot with the most commun words og the courpus. I use the ggplot function.
+
+```{r}
+CIA_clean_fplot <- CIA %>% 
+  mutate(text = 
+           str_replace_all(text, 
+                           pattern = 
+                            "\\d", "")) %>% 
+  unnest_tokens(word, text) %>%
+  anti_join(stop_words) %>%
+  anti_join(stopord_CIA) %>% 
+  count(word, sort = TRUE)
+  
+
+ggplot(data = CIA_clean_fplot %>%
+         filter(n>60)) + 
+  geom_col(mapping = aes(y = word, x = n))
+
+```
+## Wordcloud
+I can make a Wordcloud to visualize the most common words of the dataset.
+
+```{r}
+library(wordcloud)
+
+CIA %>% 
+  mutate(text = 
+           str_replace_all(text, 
+                           pattern = 
+                            "\\d", "")) %>% 
+  unnest_tokens(word, text) %>%
+  anti_join(stop_words) %>%
+  count(word, sort = TRUE) %>% 
+  anti_join(stopord_CIA) %>% 
+with(wordcloud(word, n, max.words = 100))
+```
+
+
+## Sentiment analysis
+I use textmining to make a sentiment analysis of the texts on order to approch the emotional content of the text.
+
+I use the sentimental lexicon called "NRC", "bing" and "afinn" to do my analysis.
+
+"NRC" categorizes words in a binary fasion into categories such as "negative", "positive" and "fear"
+
+"Bing" categorizes the words into positive and negative sentiment in a binary fasion
+
+"afinn" assigns the words with a score from -5 to 5, with -5 being most negative and 5 being most positive
+
+```{r}
+ CIA_clean %>% 
+  inner_join(get_sentiments("nrc")) 
+
+ CIA_clean %>%
+  inner_join(get_sentiments("bing")) 
+ 
+ CIA_clean %>% 
+   inner_join(get_sentiments("afinn")) 
+```
+
+I now want to make a visualization of the sentiment analysis. I do this with a Sentiment wordcloud
+
+```{r}
+library(reshape2)
+CIA_clean %>% 
+  anti_join(stopord_CIA) %>% 
+  anti_join(stopord_CIA) %>% 
+ inner_join(get_sentiments("bing")) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  acast(word ~ sentiment, value.var = "n", fill = 0) %>%
+  comparison.cloud(colors = c("gray20", "gray80"),
+                   max.words = 50)
+```
+
+You can visualize the sentimentanalysis in many different ways. An other way to do it would be to sort the data by subject an see which subject was the most negativ or positive. For this the NRC sentiment analysis wouldn't be the best to use.
+
+The next step would be to make the sentimentanalysis using n-grams. This would take the relationship between the words into consideration. this might giv a diffrent result for the analysis.  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
